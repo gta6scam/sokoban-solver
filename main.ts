@@ -20,7 +20,7 @@ const DIRS = [
 ];
 const INF = 1e9;
 const ROOM_EXPANSION_CAP = 600000;
-const WHOLE_EXPANSION_CAP = 2500000;
+const WHOLE_EXPANSION_CAP = 300000;
 
 // ---------------------------------------------------------------- parsing
 
@@ -191,12 +191,83 @@ function decompose(L) {
     const goals = L.goals.filter((g) => cells.has(g));
     return { cells, boxes, goals };
   });
+  // Merge pass: an articulation point inside one generated room can split
+  // it into two cores that are only balanced together (observed on drawn
+  // sets: a 3-room level whose lowest room came apart into a 4/4 core and
+  // a 2-box/1-goal fragment). Repeatedly merge an empty or unbalanced room
+  // with the neighbouring room whose merger most reduces total imbalance.
+  const imbalance = (r) => Math.abs(r.boxes.length - r.goals.length) + (r.boxes.length === 0 ? 100 : 0);
+  const totalImbalance = () => rooms.reduce((a, r) => a + imbalance(r), 0);
+  const adjacent = (a, b) => {
+    for (const c of a.cells) {
+      for (let d = 0; d < 4; d++) {
+        const v = L.nbr[c * 4 + d];
+        if (v >= 0 && b.cells.has(v)) return true;
+        if (v >= 0 && L.floor[v]) {
+          for (let e = 0; e < 4; e++) {
+            const u = L.nbr[v * 4 + e];
+            if (u >= 0 && b.cells.has(u)) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+  let mergeGuard = 0;
+  while (totalImbalance() > 0 && rooms.length > 1 && mergeGuard++ < 64) {
+    let bi = -1, bj = -1, bestGain = 0;
+    for (let i = 0; i < rooms.length; i++) {
+      if (imbalance(rooms[i]) === 0) continue;
+      for (let j = 0; j < rooms.length; j++) {
+        if (i === j || !adjacent(rooms[i], rooms[j])) continue;
+        const mergedImbalance = Math.abs((rooms[i].boxes.length + rooms[j].boxes.length) - (rooms[i].goals.length + rooms[j].goals.length)) + (rooms[i].boxes.length + rooms[j].boxes.length === 0 ? 100 : 0);
+        const gain = imbalance(rooms[i]) + imbalance(rooms[j]) - mergedImbalance;
+        if (gain > bestGain) { bestGain = gain; bi = i; bj = j; }
+      }
+    }
+    if (bi < 0) break;
+    const merged = {
+      cells: new Set([...rooms[bi].cells, ...rooms[bj].cells]),
+      boxes: [...rooms[bi].boxes, ...rooms[bj].boxes],
+      goals: [...rooms[bi].goals, ...rooms[bj].goals],
+    };
+    rooms.splice(Math.max(bi, bj), 1);
+    rooms.splice(Math.min(bi, bj), 1);
+    rooms.push(merged);
+  }
   // Validity: disjoint, balanced, and covering every box and goal.
   const covered = new Set();
   for (const r of rooms) {
     if (r.boxes.length === 0 || r.boxes.length !== r.goals.length) return null;
     for (const c of r.cells) { if (covered.has(c)) return null; covered.add(c); }
   }
+  for (const b of L.boxes) if (!covered.has(b)) return null;
+  for (const g of L.goals) if (!covered.has(g)) return null;
+  rooms.sort((a, b) => a.boxes[0] - b.boxes[0]);
+  return rooms;
+}
+
+// Fallback decomposition: remove the player's hallway row; each remaining
+// floor component is a room. Cruder than the articulation split (it cannot
+// subdivide a pinched room), but it never splits one either, so it stays
+// balanced exactly when the generator's rooms are.
+function decomposeByRow(L) {
+  const prow = (L.player / L.W) | 0;
+  const removed = new Uint8Array(L.N);
+  for (let x = 0; x < L.W; x++) removed[prow * L.W + x] = 1;
+  const comps = components(L, removed);
+  const rooms = [];
+  const covered = new Set();
+  for (const comp of comps) {
+    const cells = new Set(comp);
+    const boxes = L.boxes.filter((b) => cells.has(b));
+    if (boxes.length === 0) continue;
+    const goals = L.goals.filter((g) => cells.has(g));
+    if (boxes.length !== goals.length) return null;
+    for (const c of cells) covered.add(c);
+    rooms.push({ cells, boxes, goals });
+  }
+  if (rooms.length === 0) return null;
   for (const b of L.boxes) if (!covered.has(b)) return null;
   for (const g of L.goals) if (!covered.has(g)) return null;
   rooms.sort((a, b) => a.boxes[0] - b.boxes[0]);
@@ -468,26 +539,30 @@ function simulate(L, boxes, player, moves) {
 
 // ---------------------------------------------------------------- solver
 
+function solveByRooms(L, rooms) {
+  let boxes = L.boxes;
+  let player = L.player;
+  let out = "";
+  for (const room of rooms) {
+    const roomBoxSet = new Set(room.boxes);
+    const dyn = boxes.filter((b) => roomBoxSet.has(b));
+    const statics = new Set(boxes.filter((b) => !roomBoxSet.has(b)));
+    if (dyn.length !== room.boxes.length) return null;
+    const sol = solvePushSpace(L, dyn, room.goals, room.cells, statics, player, ROOM_EXPANSION_CAP);
+    if (sol === null) return null;
+    const after = simulate(L, boxes, player, sol);
+    boxes = after.boxes; player = after.player;
+    out += sol;
+  }
+  return boxes.every((b) => L.goalSet.has(b)) ? out : null;
+}
+
 function solveLevel(L) {
   if (L.boxes.every((b) => L.goalSet.has(b))) return "";
-  const rooms = decompose(L);
-  if (rooms) {
-    let boxes = L.boxes;
-    let player = L.player;
-    let out = "";
-    let ok = true;
-    for (const room of rooms) {
-      const roomBoxSet = new Set(room.boxes);
-      const dyn = boxes.filter((b) => roomBoxSet.has(b));
-      const statics = new Set(boxes.filter((b) => !roomBoxSet.has(b)));
-      if (dyn.length !== room.boxes.length) { ok = false; break; }
-      const sol = solvePushSpace(L, dyn, room.goals, room.cells, statics, player, ROOM_EXPANSION_CAP);
-      if (sol === null) { ok = false; break; }
-      const after = simulate(L, boxes, player, sol);
-      boxes = after.boxes; player = after.player;
-      out += sol;
-    }
-    if (ok && boxes.every((b) => L.goalSet.has(b))) return out;
+  for (const rooms of [decompose(L), decomposeByRow(L)]) {
+    if (!rooms) continue;
+    const out = solveByRooms(L, rooms);
+    if (out !== null) return out;
   }
   // Fallback: whole level in one push-space search.
   const allCells = new Set();
