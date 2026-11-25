@@ -4,10 +4,6 @@
 [![rank](https://make.fun/badge/sokoban-solver-01-run-20261121/gta6scam/sokoban-solver/rank.svg)](https://make.fun/bounty/sokoban-solver-01-run-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=sokoban-solver-01-run-20261121)
 [![reward](https://make.fun/badge/sokoban-solver-01-run-20261121/gta6scam/sokoban-solver/reward.svg)](https://make.fun/bounty/sokoban-solver-01-run-20261121?utm_source=github&utm_medium=readme&utm_campaign=sokoban-solver-01-run-20261121)
 
-[![badge](https://make.fun/api/badge/gta6scam/sokoban-solver)](https://make.fun/bounty/sokoban-solver-01-run-20261121)
-[![badge](https://make.fun/api/badge/gta6scam/sokoban-solver)](https://make.fun/bounty/sokoban-solver-01-run-20261121)
-[![badge](https://make.fun/api/badge/gta6scam/sokoban-solver)](https://make.fun/bounty/sokoban-solver-01-run-20261121)
-
 A push-optimal Sokoban solver in a single self-contained `main.ts`
 (plain JavaScript, Node 22 type stripping, no dependencies).
 
